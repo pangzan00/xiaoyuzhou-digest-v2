@@ -1,69 +1,69 @@
 # 小宇宙 Digest
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+[简体中文](README.md) | [English](README_EN.md)
 
-Turn every Xiaoyuzhou podcast episode into a resource for deep reading.
+把每个小宇宙播客单集，变成一份可以精读的学习资料。
 
-小宇宙 Digest is a Chrome side panel extension. It transcribes episode audio into a timestamped transcript with Alibaba Cloud DashScope, generates AI summaries, and supports Q&A-style deep reading. Everything carries clickable timestamps, so you can jump back to the audio and learn while listening.
+小宇宙 Digest 是一个 Chrome 侧边栏扩展：它用阿里云 DashScope 语音转写把音频转成带时间戳的文字稿，再用 AI 生成精华总结、支持问答式精读，所有内容都可以点击时间戳跳回音频，边听边学。
 
-## Demo
+## 演示
 
-![Product demo](首图动图介绍产品.webp)
+![产品演示](首图动图介绍产品.webp)
 
-## Features
+## 功能
 
-### 🎙️ Speech-to-text with speaker labels
+### 🎙️ 语音转文字，说话人分轨
 
-Automatically transcribe any public episode into a searchable, timestamped transcript. AI detects whether it's a conversation and how many speakers there are, labeling each speaker by name. Click any subtitle line to jump to that point in the audio.
+自动转写单集音频为带时间戳的文字稿，AI 自动识别是否对谈、有几位说话人，并在文字稿中标注说话人姓名。点击任意字幕，即可跳转到对应音频位置播放。
 
-![Transcript with speaker diarization](支持语音转录，并且识别说话人。点击对应的字幕可跳转对应音频进行播放.png)
+![语音转文字与说话人识别](支持语音转录，并且识别说话人。点击对应的字幕可跳转对应音频进行播放.png)
 
-### ✨ AI highlights, listen to what matters
+### ✨ AI 精华总结，卡片式精听
 
-Get the essence of a long episode at a glance. Favorite highlight cards, then click any card to jump straight to that part of the audio for a focused listen.
+快速了解长播客的精华内容。支持收藏精华卡片，点击卡片即可跳转到对应音频部分单独精听。
 
-![AI summary and highlight cards](支持全文总结，提炼精华，可快速了解长播客的精华内容。并且支持收藏，还可点击精华卡片跳转到对应音频部分单独精听.png)
+![全文总结与精华收藏](支持全文总结，提炼精华，可快速了解长播客的精华内容。并且支持收藏，还可点击精华卡片跳转到对应音频部分单独精听.png)
 
-### 💬 Q&A-style deep reading
+### 💬 问答式播客精读
 
-Ask questions tailored to your interests, guided by suggested prompts, for a targeted deep dive — perfect when you have a clear goal and want to truly understand an episode.
+根据自己的喜好，从系统提供的建议问题出发进行有针对性的精读，适合目的性比较强、想把一期播客真正搞懂的场景。
 
-![Q&A-style deep reading](问答式播客精读，可根据自己的喜好和提供的建议进行有针对性的播客精读。针对有目的性比较强的方式来进行播客的理解.png)
+![问答式播客精读](问答式播客精读，可根据自己的喜好和提供的建议进行有针对性的播客精读。针对有目的性比较强的方式来进行播客的理解.png)
 
-### 📚 Episode discovery & listening library
+### 📚 单集发现与收听库
 
-Discover more episodes from the same podcast via a link, and keep a record of episodes you care about. No need to open the mobile app or follow links — enter your favorite podcasts right from the extension.
+根据单集地址链接识别出同一播客的更多单集，并支持记录单集。以后不用再打开手机 App 或点链接进播客，直接通过插件就能进入自己常听的播客。
 
-![Episode discovery and library](支持根据所给的地址链接识别出更多单集，也支持记录单集。以后不用从手机或者点击链接进入播客，直接可以通过插件进入自己常听的播客.png)
+![单集发现与收听库](支持根据所给的地址链接识别出更多单集，也支持记录单集。以后不用从手机或者点击链接进入播客，直接可以通过插件进入自己常听的播客.png)
 
-## Getting started
+## 快速开始
 
-### Install manually
+### 手动安装
 
-1. Open `chrome://extensions` in Chrome.
-2. Turn on **Developer mode**.
-3. Click **Load unpacked** and select this project folder (it must contain `manifest.json`).
-4. Pin 小宇宙 Digest from Chrome's Extensions menu.
+1. 在 Chrome 地址栏打开 `chrome://extensions`。
+2. 打开右上角的「开发者模式」。
+3. 点击「加载已解压的扩展程序」，选择包含 `manifest.json` 的本项目文件夹。
+4. 在 Chrome 扩展菜单中固定小宇宙 Digest。
 
-### Set up your API keys
+### 配置 API Key
 
-小宇宙 Digest runs locally with your own API keys — no developer-operated server involved:
+小宇宙 Digest 使用你自己的 API Key，本地运行，不依赖任何开发者运营的服务器：
 
-- **DashScope API key**: for speech-to-text, created at the [Alibaba Cloud Model Studio console](https://bailian.console.aliyun.com/?apiKey=1) (paraformer-v2 / fun-asr).
-- **DeepSeek API key**: for AI summaries, explanations, and note polishing, created at the [DeepSeek Platform](https://platform.deepseek.com/api_keys).
+- **DashScope API Key**：用于语音转写，在[阿里云百炼控制台](https://bailian.console.aliyun.com/?apiKey=1)创建（支持 paraformer-v2 / fun-asr）。
+- **DeepSeek API Key**：用于 AI 总结、讲解和笔记润色，在 [DeepSeek 开放平台](https://platform.deepseek.com/api_keys)创建。
 
-Enter both keys on the extension's Settings page; they are stored in Chrome's local storage on your device.
+两个 Key 在扩展的「设置」页填入，保存在你设备上的 Chrome 本地存储中。
 
-### Start using it
+### 开始使用
 
-1. Open a Xiaoyuzhou episode page (`www.xiaoyuzhoufm.com/episode/...`).
-2. Click the extension icon (or the floating **Digest** button) to open the side panel.
-3. Once transcription finishes, read the transcript, browse AI highlights, and start a Q&A deep dive.
+1. 打开一个小宇宙单集页面（`www.xiaoyuzhoufm.com/episode/...`）。
+2. 点击扩展图标（或页面右下角的「Digest」按钮）打开侧边栏。
+3. 等待转写完成，即可阅读文字稿、查看精华总结、发起问答精读。
 
-## Privacy
+## 隐私
 
-There is no account system, advertising, analytics, or telemetry. The audio URL is sent directly to Alibaba Cloud DashScope for transcription, and AI features are handled by DeepSeek. API keys, notes, and caches stay in your local Chrome storage. See [PRIVACY.md](PRIVACY.md) for details.
+小宇宙 Digest 没有账号系统、广告、分析统计或行为追踪。音频地址直接发送给阿里云 DashScope 进行转写，AI 功能由 DeepSeek 处理，API Key、笔记和缓存全部保存在本地 Chrome 中。详见 [PRIVACY.md](PRIVACY.md)。
 
-## License
+## 许可
 
-MIT. See [LICENSE](LICENSE).
+MIT，详见 [LICENSE](LICENSE)。
