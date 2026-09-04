@@ -1,0 +1,3 @@
+@import '../../options.css';
+
+/* React 的设置页直接复用原版完整样式，避免两份 .settings-shell 定义互相覆盖。 */

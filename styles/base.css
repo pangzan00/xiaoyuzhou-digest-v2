@@ -1,0 +1,13 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { display: flex; flex-direction: column; overflow: hidden; background: var(--bg); color: var(--text); font: 14px/1.6 var(--font-body); -webkit-font-smoothing: antialiased; }
+button, textarea { font: inherit; }
+button { color: inherit; }
+button:focus-visible, textarea:focus-visible { outline: 3px solid rgb(37 180 225 / 32%); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; clip-path: inset(50%); }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { border-radius: var(--r-pill); background: var(--border-heavy); }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }

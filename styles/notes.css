@@ -1,0 +1,184 @@
+/* ============================================================
+   Notes Panel — card style
+   ============================================================ */
+
+.notes-filter { display: flex; gap: 3px; padding: 3px; border-radius: var(--r-pill); background: var(--surface-raised); }
+.notes-filter .enhance-btn { border: 0; background: transparent; color: var(--text-muted); }
+.notes-filter .enhance-btn.active { background: var(--accent); box-shadow: var(--shadow-sm); color: #fff; }
+
+.notes-intro { padding: 10px 2px 14px; color: var(--text-muted); text-align: left; font: 12.5px/1.7 var(--font-reading); }
+
+.notes-list { display: flex; flex-direction: column; gap: 10px; }
+
+/* ---------- card ---------- */
+
+.note-card {
+  position: relative;
+  padding: 13px 14px 11px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.note-card:hover,
+.note-card:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.note-card:focus-visible { box-shadow: var(--shadow-md), 0 0 0 2px var(--accent-dim); }
+
+/* 左侧强调条 */
+.note-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+  opacity: 0.55;
+}
+
+.note-card.is-remote::before { background: var(--text-muted); opacity: 0.35; }
+.note-card.is-remote:hover::before { background: var(--accent); opacity: 0.55; }
+
+.note-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+/* 时间戳 pill（播放按钮样式） */
+.note-timestamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 3px 10px 3px 7px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--accent-dim);
+  color: var(--accent);
+  cursor: pointer;
+  font: 600 11.5px/1.4 var(--font-mono);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.note-card:hover .note-timestamp { background: var(--accent); color: #fff; }
+
+.note-episode {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 删除按钮：hover 卡片时才显现 */
+.note-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.note-card:hover .note-delete,
+.note-delete:focus-visible { opacity: 1; }
+
+.note-delete:hover { background: rgba(180, 35, 24, 0.1); color: #b42318; }
+
+/* 正文 */
+.note-card-text {
+  margin: 0 0 10px;
+  color: var(--text);
+  font: 13.5px/1.7 var(--font-reading);
+  white-space: pre-line;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 底部 meta 行 */
+.note-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 16px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.note-channel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-date { flex: 0 0 auto; opacity: 0.85; }
+
+.note-jump-hint {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.note-jump-hint::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 4px 0 4px 6px;
+  border-color: transparent transparent transparent currentColor;
+}
+
+.note-jump-hint.seek { color: var(--accent); }
+.note-jump-hint.open { color: var(--text-muted); }
+
+.note-card:hover .note-jump-hint { opacity: 1; }
+
+/* ---------- empty / legacy ---------- */
+
+.notes-empty { padding: 44px 20px; color: var(--text-muted); text-align: center; font: 13.5px/1.7 var(--font-reading); }
+
+.note-item { margin-bottom: 11px; padding: 15px 16px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); box-shadow: var(--shadow-sm); }
+.note-item:hover { border-color: var(--accent); box-shadow: var(--shadow-md); }
+.note-header { display: flex; align-items: center; gap: 10px; margin-bottom: 11px; }
+.note-video-title { min-width: 0; flex: 1; overflow: hidden; color: var(--text-muted); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.note-text { margin-bottom: 12px; color: var(--text); font: 14px/1.65 var(--font-reading); white-space: pre-line; }
+.note-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.note-action-btn { padding: 6px 12px; background: var(--surface-raised); font-size: 11.5px; }

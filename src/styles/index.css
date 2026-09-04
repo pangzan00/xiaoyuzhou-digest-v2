@@ -1,0 +1,83 @@
+/**
+ * CSS Entry Point for Side Panel
+ * This file imports all the existing CSS files
+ */
+
+/* Bundle every side-panel style layer into Vite's generated sidepanel.css. */
+@import '../../styles/tokens.css';
+@import '../../styles/base.css';
+@import '../../styles/layout.css';
+@import '../../styles/components.css';
+@import '../../styles/library.css';
+@import '../../styles/transcript.css';
+@import '../../styles/overview.css';
+@import '../../styles/chat.css';
+@import '../../styles/notes.css';
+
+/* React shell: the legacy stylesheet expects a persistent DOM state machine,
+ * while React conditionally renders the active panel. Keep the shell itself
+ * as the constrained flex/scroll container. */
+#root,
+.sidepanel {
+  min-height: 0;
+  height: 100%;
+}
+
+.sidepanel {
+  display: flex;
+  flex-direction: column;
+}
+
+.content.chat-active {
+  display: flex;
+  overflow: hidden;
+  padding: 16px 20px 12px;
+}
+
+.content.chat-active .tab-panel[data-panel="chat"].active {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+}
+
+/* React-specific utility classes */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* Chat typing indicator */
+.chat-typing {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+}
+
+.chat-typing span {
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+  border-radius: 50%;
+  animation: typing-bounce 1.4s infinite ease-in-out both;
+}
+
+.chat-typing span:nth-child(1) { animation-delay: -0.32s; }
+.chat-typing span:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes typing-bounce {
+  0%, 80%, 100% {
+    transform: scale(0);
+  }
+  40% {
+    transform: scale(1);
+  }
+}

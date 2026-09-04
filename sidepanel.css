@@ -1,0 +1,13 @@
+/*
+ * Compatibility entry point.
+ *
+ * The side panel now imports focused style layers from `styles/` in
+ * `sidepanel.html`: tokens, base, layout, shared components, and one file per
+ * product feature. Keep this file so existing release tooling and local
+ * overrides retain a stable URL.
+ *
+ * Feature selectors live in the corresponding files, for example:
+ * `.transcript-entry--untimed` in `styles/transcript.css`,
+ * `.notes-filter .enhance-btn.active` in `styles/notes.css`, and
+ * `.episode-chat-composer` in `styles/chat.css`.
+ */
