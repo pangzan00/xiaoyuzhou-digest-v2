@@ -23,6 +23,19 @@ function assetUrl(path: string): string {
     : new URL(path, document.baseURI).toString();
 }
 
+/** 每张卡片使用自己的 timestampSeconds；兼容旧缓存中只有 timestamp 文本的记录。 */
+function resolveTimestampSeconds(seconds: unknown, timestamp?: unknown): number | null {
+  const direct = Number(seconds);
+  if (Number.isFinite(direct) && direct >= 0) return Math.floor(direct);
+
+  const match = String(timestamp ?? '').trim().match(/^\[?(?:(\d+):)?(\d+):([0-5]\d)\]?$/);
+  if (!match) return null;
+  const hours = Number(match[1] || 0);
+  const minutes = Number(match[2]);
+  const remainingSeconds = Number(match[3]);
+  return hours * 3600 + minutes * 60 + remainingSeconds;
+}
+
 interface ModuleStateProps {
   loading: boolean;
   error: string | null;
@@ -84,8 +97,16 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({
   loading,
   errors,
 }) => {
-  const sortedChallenges = [...(challenges || [])].sort((left, right) => left.timestampSeconds - right.timestampSeconds);
-  const sortedCounter = [...(counterIntuitive || [])].sort((left, right) => left.timestampSeconds - right.timestampSeconds);
+  const sortedChallenges = [...(challenges || [])].sort(
+    (left, right) =>
+      (resolveTimestampSeconds(left.timestampSeconds, left.timestamp) ?? Number.POSITIVE_INFINITY) -
+      (resolveTimestampSeconds(right.timestampSeconds, right.timestamp) ?? Number.POSITIVE_INFINITY)
+  );
+  const sortedCounter = [...(counterIntuitive || [])].sort(
+    (left, right) =>
+      (resolveTimestampSeconds(left.timestampSeconds, left.timestamp) ?? Number.POSITIVE_INFINITY) -
+      (resolveTimestampSeconds(right.timestampSeconds, right.timestamp) ?? Number.POSITIVE_INFINITY)
+  );
 
   return (
     <div className="tab-panel active" data-panel="overview">
@@ -106,17 +127,23 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({
         <div id="challengesList">
           {sortedChallenges.length ? (
             sortedChallenges.map((item, index) => {
+              const timestampSeconds = resolveTimestampSeconds(item.timestampSeconds, item.timestamp);
+              if (timestampSeconds === null) return null;
               const noteText = `挑战：${item.challenge}${item.solution ? `\n解决方案：${item.solution}` : ''}`;
-              const saved = isCardNoteSaved(noteText, item.timestampSeconds);
+              const saved = isCardNoteSaved(noteText, timestampSeconds);
               return (
                 <div
-                  key={`${item.timestampSeconds}-${index}`}
+                  key={`${timestampSeconds}-${index}`}
                   className="challenge-item analysis-card"
-                  onClick={() => onSeek(item.timestampSeconds)}
+                  data-seconds={timestampSeconds}
+                  onClick={() => onSeek(timestampSeconds)}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') onSeek(item.timestampSeconds);
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      onSeek(timestampSeconds);
+                    }
                   }}
                 >
                   <div className="challenge-head">
@@ -132,9 +159,9 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({
                   )}
                   <CardNoteButton
                     text={noteText}
-                    timestampSeconds={item.timestampSeconds}
+                    timestampSeconds={timestampSeconds}
                     saved={saved}
-                    onToggle={() => onToggleCardNote(noteText, item.timestampSeconds)}
+                    onToggle={() => onToggleCardNote(noteText, timestampSeconds)}
                   />
                 </div>
               );
@@ -162,17 +189,23 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({
         <div id="counterIntuitiveList">
           {sortedCounter.length ? (
             sortedCounter.map((item, index) => {
+              const timestampSeconds = resolveTimestampSeconds(item.timestampSeconds, item.timestamp);
+              if (timestampSeconds === null) return null;
               const noteText = `反常识：${item.claim}${item.explanation ? `\n${item.explanation}` : ''}`;
-              const saved = isCardNoteSaved(noteText, item.timestampSeconds);
+              const saved = isCardNoteSaved(noteText, timestampSeconds);
               return (
                 <div
-                  key={`${item.timestampSeconds}-${index}`}
+                  key={`${timestampSeconds}-${index}`}
                   className="counter-item analysis-card"
-                  onClick={() => onSeek(item.timestampSeconds)}
+                  data-seconds={timestampSeconds}
+                  onClick={() => onSeek(timestampSeconds)}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') onSeek(item.timestampSeconds);
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      onSeek(timestampSeconds);
+                    }
                   }}
                 >
                   <div className="counter-head">
@@ -183,9 +216,9 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({
                   {item.explanation && <div className="counter-explanation">{item.explanation}</div>}
                   <CardNoteButton
                     text={noteText}
-                    timestampSeconds={item.timestampSeconds}
+                    timestampSeconds={timestampSeconds}
                     saved={saved}
-                    onToggle={() => onToggleCardNote(noteText, item.timestampSeconds)}
+                    onToggle={() => onToggleCardNote(noteText, timestampSeconds)}
                   />
                 </div>
               );
@@ -212,15 +245,32 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({
             </button>
           </div>
           <ul className="chapter-list">
-            {chapters.map((chapter, index) => (
-              <li key={`${chapter.timestampSeconds}-${index}`} className="chapter-item" onClick={() => onSeek(chapter.timestampSeconds)}>
-                <span className="chapter-timestamp">[{chapter.timestamp}]</span>
-                <span className="chapter-content">
-                  <span className="chapter-title">{chapter.title}</span>
-                  {chapter.summary && <span className="chapter-summary">{chapter.summary}</span>}
-                </span>
-              </li>
-            ))}
+            {chapters.map((chapter, index) => {
+              const timestampSeconds = resolveTimestampSeconds(chapter.timestampSeconds, chapter.timestamp);
+              if (timestampSeconds === null) return null;
+              return (
+                <li
+                  key={`${timestampSeconds}-${index}`}
+                  className="chapter-item"
+                  data-seconds={timestampSeconds}
+                  onClick={() => onSeek(timestampSeconds)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      onSeek(timestampSeconds);
+                    }
+                  }}
+                >
+                  <span className="chapter-timestamp">[{chapter.timestamp}]</span>
+                  <span className="chapter-content">
+                    <span className="chapter-title">{chapter.title}</span>
+                    {chapter.summary && <span className="chapter-summary">{chapter.summary}</span>}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         </div>
       ) : null}

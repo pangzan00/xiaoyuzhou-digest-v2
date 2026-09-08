@@ -50,6 +50,11 @@ declare namespace Chrome {
     onActivated: chrome.events.Event<(activeInfo: chrome.tabs.ActiveInfo) => void>;
   }
 
+  interface StorageChange {
+    oldValue?: any;
+    newValue?: any;
+  }
+
   interface Storage {
     local: {
       get(keys: string | string[] | null | object, callback?: (items: { [key: string]: any }) => void): Promise<{ [key: string]: any }>;
@@ -58,8 +63,11 @@ declare namespace Chrome {
       clear(callback?: () => void): Promise<void>;
       setAccessLevel(accessLevel: { accessLevel: string }): Promise<void>;
     };
+    onChanged: chrome.events.Event<(
+      changes: { [key: string]: StorageChange },
+      areaName: string
+    ) => void>;
   }
-
   interface Action {
     onClicked: chrome.events.Event<(tab: chrome.tabs.Tab) => void>;
   }

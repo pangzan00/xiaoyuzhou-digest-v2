@@ -20,7 +20,8 @@ export async function openSidePanelForTab(tabId: number, url?: string): Promise<
 
   await chrome.sidePanel.open({ tabId });
   // 等待侧边栏 React 入口完成挂载，再让它启动当前单集的 Digest 流程。
-  window.setTimeout(() => {
+  // Service Worker 没有 window 对象，必须使用全局 setTimeout。
+  setTimeout(() => {
     chrome.runtime.sendMessage({ action: 'startDigestFromButton' }).catch(() => {});
   }, 300);
 }
@@ -108,7 +109,7 @@ async function reinjectWithCacheBust(tabId: number, modulePath: string): Promise
 
 export async function injectContentScriptIfNeeded(tabId: number): Promise<void> {
   const files = getContentScriptFiles();
-  if (!files.length) return;
+  if (!files.length) throw new Error('扩展没有配置 content script 文件。');
 
   try {
     if (await isContentScriptAlive(tabId)) return;
@@ -132,8 +133,12 @@ export async function injectContentScriptIfNeeded(tabId: number): Promise<void> 
 
     // 常规路径：页面从未注入过，直接注入 manifest 声明的文件。
     await chrome.scripting.executeScript({ target: { tabId }, files });
-  } catch {
-    // 受限页面、正在跳转或尚未加载完成的标签页：忽略即可。
+    if (!(await isContentScriptAlive(tabId))) {
+      throw new Error('content script 注入后仍未响应 ping。');
+    }
+  } catch (error) {
+    // 主动注入场景需要把错误抛给调用方；生命周期事件调用方会自行吞掉。
+    throw error instanceof Error ? error : new Error(String(error));
   }
 }
 
@@ -159,14 +164,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   // changeInfo.url 覆盖纯 hash 导航（如带时间戳跳转复用已有标签页），
   // 此时也会触发 content script 补注入。
   if (changeInfo.status !== 'complete' && !changeInfo.url) return;
-  void injectContentScriptIfNeeded(tabId);
+  void injectContentScriptIfNeeded(tabId).catch(() => {});
 });
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   void (async () => {
     try {
       const tab = await chrome.tabs.get(tabId);
-      if (isXiaoyuzhouUrl(tab.url)) await injectContentScriptIfNeeded(tabId);
+      if (isXiaoyuzhouUrl(tab.url)) await injectContentScriptIfNeeded(tabId).catch(() => {});
     } catch {
       // 标签页可能已被关闭。
     }

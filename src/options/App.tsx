@@ -4,11 +4,12 @@
  * Settings page for the Xiaoyuzhou Digest extension
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { normalize } from '../shared/domain';
 import { DEFAULT_SETTINGS } from '../types';
 import { Settings, AsrModel, DiarizationMode } from '../types';
+import { createDigestBackup, mergeDigestData, parseDigestBackup } from '../shared/backup';
 import '../styles/options.css';
 
 // ============================================================
@@ -71,6 +72,7 @@ export const OptionsApp: React.FC<OptionsProps> = () => {
   const [loadedSettings, setLoadedSettings] = useState<Settings | null>(null);
   const [saveStatus, setSaveStatus] = useState('');
   const [dataStatus, setDataStatus] = useState('');
+  const backupInputRef = useRef<HTMLInputElement>(null);
   const [customizationPrompt, setCustomizationPrompt] = useState(`请把当前本地小宇宙 Digest 工作区改为使用 [PROVIDER] 提供的 [MODEL]。只在当前工作区中操作。编辑前，先确认其中包含 manifest.json，且 manifest 中的 name 是小宇宙 Digest。如果验证失败，请停止，并让我在编程 Agent 中打开小宇宙 Digest 解压后的项目文件夹。不要搜索其他文件夹，不要编辑猜测的副本，不要假设安装路径，也不要声称 Chrome 可以显示操作系统中的绝对源码路径。更新该服务的 API endpoint、请求格式和最少的 Chrome host permissions。保留用户自带密钥模式和 Chrome 本地存储。不要把 API 密钥写入源代码、提交记录、日志、截图、这段提示词或聊天；代码准备好后，请告诉我应该在哪里自行填写密钥。DeepSeek 专用的请求参数和重试逻辑继续只用于 DeepSeek。新服务的专属规则请单独处理，避免相互影响。更新 README.md、PRIVACY.md、SECURITY.md 和测试。运行 npm test、npm run check 和 npm run package。最后，说明如何重新加载已解压的扩展，并在真实小宇宙单集上测试。`);
   const [copyStatus, setCopyStatus] = useState('');
 
@@ -152,6 +154,68 @@ export const OptionsApp: React.FC<OptionsProps> = () => {
       setDataStatus(`已清除 ${keys.length} 条缓存摘要。`);
     } catch (_e) {
       setDataStatus('清除失败');
+    }
+  }
+
+  async function handleExportBackup() {
+    try {
+      const allData = await storage.get(null) as Record<string, unknown>;
+      const backup = createDigestBackup(allData);
+      const digestCount = Object.keys(backup.data.digests).length;
+      const itemCount = digestCount
+        + backup.data.history.length
+        + backup.data.notes.length
+        + backup.data.podcasts.length;
+      if (!itemCount) {
+        setDataStatus('暂无可导出的文字稿、笔记或浏览记录。');
+        return;
+      }
+
+      const blob = new Blob([JSON.stringify(backup, null, 2)], {
+        type: 'application/json;charset=utf-8',
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `xiaoyuzhou-digest-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setDataStatus(`已导出 1 个本地备份文件，包含 ${digestCount} 集文字稿、${backup.data.notes.length} 条笔记；不包含 API 密钥。`);
+    } catch (_error) {
+      setDataStatus('备份导出失败，请重试。');
+    }
+  }
+
+  async function handleImportBackup(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (file.size > 100 * 1024 * 1024) {
+      setDataStatus('备份文件超过 100 MB，无法导入。');
+      return;
+    }
+
+    setDataStatus('正在读取备份…');
+    try {
+      const parsed = parseDigestBackup(JSON.parse(await file.text()));
+      const confirmed = window.confirm(
+        `将导入 ${parsed.digestCount} 集文字稿、${parsed.noteCount} 条笔记和 ${parsed.podcastCount} 个播客记录。\n\n导入会与当前本机数据合并；同一集文字稿保留保存时间较新的版本。不会导入或覆盖 API 密钥。是否继续？`
+      );
+      if (!confirmed) {
+        setDataStatus('已取消导入，本机数据未变更。');
+        return;
+      }
+
+      const currentData = await storage.get(null) as Record<string, unknown>;
+      const mergedData = mergeDigestData(currentData, parsed.items);
+      await storage.set(mergedData);
+      setDataStatus(
+        `已合并 ${parsed.digestCount} 集文字稿、${parsed.noteCount} 条笔记和 ${parsed.podcastCount} 个播客记录。`
+      );
+    } catch (error) {
+      setDataStatus(error instanceof Error ? error.message : '备份导入失败，请确认文件格式正确。');
     }
   }
 
@@ -334,9 +398,22 @@ export const OptionsApp: React.FC<OptionsProps> = () => {
       <section className="card data-card">
         <h2>本地数据</h2>
         <p className="help">
-          摘要、文字稿和笔记仅保存在当前 Chrome 个人资料中。你可以随时删除。
+          摘要、文字稿和笔记平时只保存在当前 Chrome 本机，不会自动下载文件。准备卸载、换电脑或定期整理时，再手动导出 1 个完整备份；重新安装后可从该文件恢复。备份不包含 API 密钥。
         </p>
         <div className="data-actions">
+          <button onClick={handleExportBackup} className="primary" type="button">
+            导出完整本地备份
+          </button>
+          <button onClick={() => backupInputRef.current?.click()} type="button">
+            从本地备份恢复
+          </button>
+          <input
+            ref={backupInputRef}
+            type="file"
+            accept=".json,application/json"
+            onChange={handleImportBackup}
+            hidden
+          />
           <button onClick={handleClearCache} type="button">
             清除缓存的摘要
           </button>

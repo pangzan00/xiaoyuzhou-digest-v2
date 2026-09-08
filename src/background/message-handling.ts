@@ -10,7 +10,7 @@ import { handleSaveNote, handleSaveCardNote, handleGetNotes, handleDeleteNote } 
 import { handleGetVideoInfo } from './video-info';
 import { getSettings } from './index';
 import { handleFetchPodcastEpisodes } from './podcast-parser';
-import { openSidePanelForTab } from './sidepanel-setup';
+import { injectContentScriptIfNeeded, isXiaoyuzhouUrl, openSidePanelForTab } from './sidepanel-setup';
 
 // ============================================================
 // MESSAGE HANDLING
@@ -59,6 +59,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         channelName: message.channelName,
         videoDescription: message.videoDescription,
         conversation: message.conversation,
+        chatMode: message.chatMode,
       })
         .then(sendResponse)
         .catch((err) => sendResponse({ success: false, error: err.message }));
@@ -172,33 +173,57 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'relayToContent': {
       (async () => {
         try {
-          let tabs = await chrome.tabs.query({
-            active: true,
-            lastFocusedWindow: true,
-          });
+          const requestedTabId = Number.isInteger(message.targetTabId) ? message.targetTabId : null;
+          let targetTab: { id?: number; url?: string } | undefined;
 
-          if (!tabs[0] || !tabs[0].url?.includes('xiaoyuzhoufm.com')) {
-            tabs = await chrome.tabs.query({
-              url: 'https://www.xiaoyuzhoufm.com/*',
-              active: true,
-            });
+          // 优先使用侧边栏记录的标签页，避免多个小宇宙页面打开时误发到别的页面。
+          if (requestedTabId !== null) {
+            try {
+              const requestedTab = await chrome.tabs.get(requestedTabId);
+              if (isXiaoyuzhouUrl(requestedTab.url)) targetTab = requestedTab;
+            } catch {
+              // 记录的标签页可能已经被关闭，继续按当前活动页查找。
+            }
           }
 
-          if (!tabs[0]) {
-            tabs = await chrome.tabs.query({
-              url: 'https://www.xiaoyuzhoufm.com/*',
-            });
+          if (!targetTab) {
+            const activeTabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+            if (isXiaoyuzhouUrl(activeTabs[0]?.url)) targetTab = activeTabs[0];
           }
 
-          if (tabs[0]) {
-            const response = await chrome.tabs.sendMessage(
-              tabs[0].id!,
-              message.payload
-            );
-            sendResponse({ success: true, response });
-          } else {
+          if (!targetTab) {
+            const xiaoyuzhouTabs = await chrome.tabs.query({ url: 'https://www.xiaoyuzhoufm.com/*' });
+            targetTab = xiaoyuzhouTabs[0];
+          }
+
+          if (!targetTab?.id) {
+            console.warn('[Digest 诊断][后台]', '未找到任何小宇宙标签页');
             sendResponse({ success: false, error: '未找到小宇宙标签页' });
+            return;
           }
+
+          const payload = message.payload;
+          console.warn(
+            '[Digest 诊断][后台]',
+            `relayToContent 转发 ${payload?.action} → 标签页 #${targetTab.id} (${targetTab.url})`
+          );
+
+          try {
+            const response = await chrome.tabs.sendMessage(targetTab.id, payload);
+            console.warn('[Digest 诊断][后台]', `转发成功，页面返回: ${JSON.stringify(response) ?? 'undefined'}`);
+            sendResponse({ success: true, response, tabId: targetTab.id, injected: false });
+            return;
+          } catch (sendError) {
+            console.warn(
+              '[Digest 诊断][后台]',
+              `首次发送失败，尝试注入 content script: ${sendError instanceof Error ? sendError.message : String(sendError)}`
+            );
+          }
+
+          await injectContentScriptIfNeeded(targetTab.id);
+          const response = await chrome.tabs.sendMessage(targetTab.id, payload);
+          console.warn('[Digest 诊断][后台]', `注入后重试成功，页面返回: ${JSON.stringify(response) ?? 'undefined'}`);
+          sendResponse({ success: true, response, tabId: targetTab.id, injected: true });
         } catch (err) {
           console.error('[小宇宙 Digest v2.0 BG] Relay error:', err instanceof Error ? err.message : err);
           sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });

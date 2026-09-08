@@ -5,7 +5,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { SuggestedQuestion } from '../../types';
+import type { EpisodeChatMode, SuggestedQuestion } from '../../types';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -22,6 +22,8 @@ interface ChatPanelProps {
   suggestionsError: string | null;
   onRegenerateSuggestions: () => void;
   onSend: (question: string) => void;
+  chatMode: EpisodeChatMode;
+  onChatModeChange: (mode: EpisodeChatMode) => void;
   onClear: () => void;
   onSeek: (seconds: number) => void;
 }
@@ -139,10 +141,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   suggestionsError,
   onRegenerateSuggestions,
   onSend,
+  chatMode,
+  onChatModeChange,
   onClear,
   onSeek,
 }) => {
   const [inputValue, setInputValue] = useState('');
+  const [composerExpanded, setComposerExpanded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const isUnavailable = !hasTranscript;
@@ -160,6 +165,20 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     event.preventDefault();
     submitQuestion(inputValue);
     setInputValue('');
+    setComposerExpanded(false);
+  };
+
+  const handleInputChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const textarea = event.currentTarget;
+    const previousHeight = textarea.style.height;
+
+    // 按内容测量自然高度；超过默认两行时才切换至固定的大输入框。
+    textarea.style.height = 'auto';
+    const exceedsCollapsedHeight = textarea.scrollHeight > 52;
+    textarea.style.height = previousHeight;
+
+    setInputValue(textarea.value);
+    setComposerExpanded(exceedsCollapsedHeight);
   };
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
@@ -243,7 +262,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               </button>
             </div>
             {suggestionsLoading ? (
-              [72, 88, 60, 80].map((width, index) => (
+              [72, 88, 60].map((width, index) => (
                 <div key={index} className="episode-chat-suggestion is-skeleton" aria-hidden="true">
                   <span>
                     <i style={{ width: `${width}%` }} />
@@ -273,7 +292,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           </div>
         )}
 
-        <form className="episode-chat-composer" onSubmit={handleSubmit}>
+        <form className={`episode-chat-composer${composerExpanded ? ' is-expanded' : ''}`} onSubmit={handleSubmit}>
           <label className="sr-only" htmlFor="episodeChatInput">向本期节目提问</label>
           <textarea
             ref={inputRef}
@@ -283,7 +302,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             placeholder={isUnavailable ? '完成带时间戳转录后即可提问' : '问问这期节目…'}
             enterKeyHint="send"
             value={inputValue}
-            onChange={(event) => setInputValue(event.target.value)}
+            onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             disabled={loading || isUnavailable}
           />
@@ -292,6 +311,28 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               <i aria-hidden="true"></i>{isUnavailable ? '尚未关联可用文字稿' : '已关联本期文字稿'}
             </span>
             <div className="episode-chat-submit-area">
+              <div className="episode-chat-mode" role="group" aria-label="回答模式">
+                <button
+                  className={chatMode === 'strict' ? 'is-active' : ''}
+                  type="button"
+                  onClick={() => onChatModeChange('strict')}
+                  disabled={loading}
+                  title="严谨版：仅依据本集转录稿回答"
+                  aria-pressed={chatMode === 'strict'}
+                >
+                  严谨
+                </button>
+                <button
+                  className={chatMode === 'open' ? 'is-active' : ''}
+                  type="button"
+                  onClick={() => onChatModeChange('open')}
+                  disabled={loading}
+                  title="开放版：以本集转录稿为主，并可补充通用知识"
+                  aria-pressed={chatMode === 'open'}
+                >
+                  开放
+                </button>
+              </div>
               <span className="episode-chat-shortcut"><kbd>Enter</kbd> 发送</span>
               <button
                 className="episode-chat-send"

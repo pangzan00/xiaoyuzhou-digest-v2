@@ -1,8 +1,8 @@
-import { defineConfig, type Plugin, type ResolvedConfig } from 'vite';
+import { defineConfig, transformWithEsbuild, type Plugin, type ResolvedConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { crx } from '@crxjs/vite-plugin';
 import sourceManifest from './manifest.json';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -36,6 +36,9 @@ export default defineConfig({
     copyExtensionStaticAssets(),
     emitStableEntryPoints(),
   ],
+  // 根目录 manifest 指向 dist/options.html 和 dist/sidepanel.html，
+  // 使用相对资源路径，避免 /assets/... 被解析到扩展根目录。
+  base: './',
   resolve: {
     alias: {
       '@': resolve(projectRoot, 'src'),
@@ -140,11 +143,11 @@ function copyExtensionStaticAssets(): Plugin {
 }
 
 /**
- * CRXJS emits hashed loader chunks (service-worker-loader.js,
- * assets/index.ts-loader-<hash>.js), but the root manifest — used when the
- * repository itself is loaded as an unpacked extension — references stable
- * paths dist/background.js and dist/content.js. Re-emit those entry points
- * after every build so both loading styles keep working.
+ * CRXJS emits a dynamic-import loader for content scripts. That loader is
+ * fragile when the repository root is loaded as an unpacked extension, and it
+ * can leave an already-open page without a message receiver after reload.
+ * Emit a classic, self-contained content script instead, and keep stable
+ * background/content entry points for the root manifest.
  */
 function emitStableEntryPoints(): Plugin {
   let config: ResolvedConfig;
@@ -158,7 +161,7 @@ function emitStableEntryPoints(): Plugin {
     configResolved(resolvedConfig) {
       config = resolvedConfig;
     },
-    closeBundle() {
+    async closeBundle() {
       if (config.command !== 'build') return;
 
       const destination = outputDir();
@@ -167,14 +170,34 @@ function emitStableEntryPoints(): Plugin {
         copyFileSync(serviceWorkerLoader, join(destination, 'background.js'));
       }
 
-      const assetsDir = join(destination, 'assets');
-      if (existsSync(assetsDir)) {
-        const contentLoader = readdirSync(assetsDir).find((file) =>
-          /-loader-[A-Za-z0-9_-]+\.js$/.test(file)
-        );
-        if (contentLoader) {
-          copyFileSync(join(assetsDir, contentLoader), join(destination, 'content.js'));
+      // Do not use CRXJS's dynamic-import content loader for the stable entry
+      // point. A classic IIFE can be injected by Chrome directly and registers
+      // chrome.runtime.onMessage before any page UI initialization runs.
+      const contentSource = resolve(config.root, 'src/content/index.ts');
+      if (existsSync(contentSource)) {
+        const source = readFileSync(contentSource, 'utf8');
+        const transformed = await transformWithEsbuild(source, 'content.js', {
+          loader: 'ts',
+          format: 'iife',
+          target: 'es2022',
+          sourcemap: false,
+        });
+        writeFileSync(join(destination, 'content.js'), transformed.code);
+      }
+
+      // The dist manifest is used when dist/ is loaded directly. Point it at
+      // the same self-contained script so both supported loading modes behave
+      // identically instead of one mode using the CRXJS loader.
+      const distManifestPath = join(destination, 'manifest.json');
+      if (existsSync(distManifestPath)) {
+        const distManifest = JSON.parse(readFileSync(distManifestPath, 'utf8')) as {
+          content_scripts?: Array<{ js?: string[] }>;
+        };
+        for (const script of distManifest.content_scripts || []) {
+          script.js = ['content.js'];
         }
+        writeFileSync(distManifestPath, `${JSON.stringify(distManifest, null, 2)}
+`);
       }
     },
   };

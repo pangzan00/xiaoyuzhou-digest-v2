@@ -45,4 +45,13 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .explain-loading { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 20px; color: var(--text-muted); }
 .loading-bar { position: relative; width: 200px; height: 5px; overflow: hidden; border-radius: var(--r-pill); background: var(--border); }
 .loading-bar::after { position: absolute; width: 60%; height: 100%; border-radius: inherit; background: var(--accent); content: ""; animation: loading-indicator 1.5s ease-in-out infinite; }
+
+/* 跳转诊断卡片：seek 失败时悬浮展示分步诊断信息 */
+.seek-diagnostics { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 3000; padding: 12px 14px; border: 1px solid var(--danger); border-radius: var(--r-md); background: var(--surface); box-shadow: var(--shadow-lg); }
+.seek-diagnostics-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: var(--danger); font: 650 13px/1.3 var(--font-display); }
+.seek-diagnostics-actions { display: flex; gap: 6px; }
+.seek-diagnostics-actions button { padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--r-pill); background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 12px; }
+.seek-diagnostics-actions button:hover { border-color: var(--accent); color: var(--accent); }
+.seek-diagnostics-steps { max-height: 180px; overflow-y: auto; margin: 0 0 8px; padding-left: 20px; color: var(--text-secondary); font: 12px/1.6 var(--font-mono); }
+.seek-diagnostics-hint { margin: 0; color: var(--text-muted); font-size: 11.5px; }
 @keyframes loading-indicator { from { left: -60%; } to { left: 100%; } }

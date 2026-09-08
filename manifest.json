@@ -37,6 +37,12 @@
       "run_at": "document_idle"
     }
   ],
+  "web_accessible_resources": [
+    {
+      "resources": ["dist/assets/*.js"],
+      "matches": ["https://www.xiaoyuzhoufm.com/*"]
+    }
+  ],
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

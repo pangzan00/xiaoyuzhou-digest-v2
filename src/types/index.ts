@@ -133,6 +133,8 @@ export interface TranscriptionError {
 
 export type AsrModel = 'paraformer-v2' | 'fun-asr';
 export type DiarizationMode = 'auto' | 'on' | 'off';
+/** 单集问答的回答范围：严格限于转录稿，或以转录稿为主并允许补充通用知识。 */
+export type EpisodeChatMode = 'strict' | 'open';
 
 export interface Settings {
   provider: string;
@@ -197,6 +199,7 @@ export const STORAGE_KEYS = Object.freeze({
   NOTES: 'xyz_notes',
   HISTORY: 'xyz_history',
   PODCASTS: 'xyz_podcasts',
+  CHAT_MODE: 'xyz_chat_mode',
 } as const);
 
 export interface TranscriptProgressMessage {

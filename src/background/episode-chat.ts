@@ -3,7 +3,7 @@
  */
 
 import { loadPromptSection, requestAiCompletion, requestAiCompletionStream } from './index';
-import type { SuggestedQuestion } from '../types';
+import type { EpisodeChatMode, SuggestedQuestion } from '../types';
 
 // ============================================================
 // CONSTANTS
@@ -58,6 +58,7 @@ interface ChatRequest {
   channelName: string;
   videoDescription: string;
   conversation?: Array<{ role: string; content: string }>;
+  chatMode?: EpisodeChatMode;
 }
 
 interface BuildChatResult {
@@ -72,6 +73,7 @@ function buildEpisodeChatRequest({
   channelName,
   videoDescription,
   conversation,
+  chatMode = 'strict',
 }: ChatRequest): BuildChatResult {
   const normalizedQuestion = typeof question === 'string' ? question.trim() : '';
 
@@ -97,12 +99,18 @@ function buildEpisodeChatRequest({
     '</转录稿>',
   ].join('\n');
 
+  const isOpenMode = chatMode === 'open';
   const systemPrompt = [
-    '你是小宇宙 Digest v2.0 的播客问答助手。只依据本次提供的单集信息和转录稿回答用户问题。',
-    '转录稿未明确提及时，直接说明"本集未提及"或"依据当前转录无法确定"，不得用外部知识补全或猜测。',
-    '回答使用简洁、自然的中文。涉及节目中的观点、案例或事实时，尽量在对应句子后附上 1 至 3 个来自转录稿的 [分:秒] 时间点；不得编造时间点。',
+    '你是小宇宙 Digest v2.0 的播客问答助手。回答使用简洁、自然的中文。',
+    isOpenMode
+      ? '当前为「开放版」：以本次提供的单集信息和转录稿为主要依据；在转录稿不足以完整回答时，可以补充可靠的通用知识、背景或分析。必须明确区分「本集内容」与「补充说明」，不得把外部知识、推断或个人分析说成节目中的原话或事实。'
+      : '当前为「严谨版」：只依据本次提供的单集信息和转录稿回答用户问题。转录稿未明确提及时，直接说明「本集未提及」或「依据当前转录无法确定」，不得用外部知识补全或猜测。',
+    '涉及节目中的观点、案例或事实时，尽量在对应句子后附上 1 至 3 个来自转录稿的 [分:秒] 时间点；不得编造时间点。',
+    isOpenMode
+      ? '补充外部知识时不要编造来源或时间点；若信息存在不确定性、时效性或争议，应明确说明。'
+      : '',
     '如果提供的转录稿被截断，不能声称已阅读未提供的部分。',
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 
   return {
     wasTruncated,
@@ -135,6 +143,8 @@ function createEpisodeChatError(error: unknown): Error {
 // ============================================================
 // SUGGESTED QUESTIONS (AI-generated, "你可能想问")
 // ============================================================
+
+const SUGGESTED_QUESTION_LIMIT = 3;
 
 export interface SuggestedQuestionsRequest {
   transcriptText: string;
@@ -172,7 +182,7 @@ export async function handleGenerateSuggestedQuestions(
       ],
     });
 
-    const questions = parseSuggestedQuestions(text);
+    const questions = parseSuggestedQuestions(text).slice(0, SUGGESTED_QUESTION_LIMIT);
     if (!questions.length) throw new Error('生成推荐问题失败，请重试。');
 
     return { success: true, questions };
@@ -234,7 +244,7 @@ export async function handleAskEpisodeQuestionStream(
 
     const { text: answer } = await requestAiCompletionStream({
       maxTokens: 1536,
-      temperature: 0.2,
+      temperature: request.chatMode === 'open' ? 0.55 : 0.2,
       messages,
       signal,
       onChunk,
@@ -259,7 +269,7 @@ export async function handleAskEpisodeQuestion(
 
     const { text: answer } = await requestAiCompletion({
       maxTokens: 1536,
-      temperature: 0.2,
+      temperature: request.chatMode === 'open' ? 0.55 : 0.2,
       messages,
     });
 

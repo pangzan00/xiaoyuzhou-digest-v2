@@ -16,7 +16,9 @@ import {
   EpisodeInfo,
   HistoryEntry,
   SuggestedQuestion,
+  EpisodeChatMode,
   ACTIONS,
+  STORAGE_KEYS,
 } from '../types';
 import { Header } from './components/Header';
 import { WelcomeState } from './components/WelcomeState';
@@ -160,6 +162,7 @@ export const App: React.FC<AppProps> = () => {
   const [stateData, setStateData] = useState<AppStateData>(initialState);
   const [activeTab, setActiveTab] = useState<TabName>('transcript');
   const [errorInfo, setErrorInfo] = useState<{ title: string; message: string } | null>(null);
+const [seekDiagnostics, setSeekDiagnostics] = useState<string[] | null>(null);
   const [loadingInfo, setLoadingInfo] = useState<{ title: string; subtitle: string; progress: number }>({
     title: '正在转写音频',
     subtitle: '正在通过 paraformer-v2 转写音频，长节目可能需要几分钟…',
@@ -184,6 +187,7 @@ export const App: React.FC<AppProps> = () => {
     content: string;
   }>>([]);
   const [chatLoading, setChatLoading] = useState(false);
+const [chatMode, setChatMode] = useState<EpisodeChatMode>('strict');
 const [suggestedQuestions, setSuggestedQuestions] = useState<SuggestedQuestion[]>([]);
 const [suggestionsLoading, setSuggestionsLoading] = useState(false);
 const [suggestionsError, setSuggestionsError] = useState<string | null>(null);
@@ -240,15 +244,50 @@ const noteJumpRef = useRef<{ videoId: string; expiresAt: number } | null>(null);
       .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
       .map((entry) => ({
         videoId: String(entry.videoId || '').trim(),
-        title: String(entry.title || '').trim(),
-        channel: String(entry.channel || entry.channelName || '').trim(),
+        title: String(entry.title || entry.videoTitle || entry.episodeTitle || '').trim(),
+        channel: String(entry.channel || entry.channelName || entry.podcastTitle || '').trim(),
         image: String(entry.image || entry.coverImage || '').trim(),
-        timestamp: Number(entry.timestamp) || 0,
+        timestamp: Number(entry.timestamp || entry.createdAt) || 0,
       }))
       .filter((entry) => /^[0-9a-fA-F]{24}$/.test(entry.videoId) && !seen.has(entry.videoId) && !!seen.add(entry.videoId))
       .sort((left, right) => right.timestamp - left.timestamp)
       .slice(0, HISTORY_LIMIT);
   }, []);
+
+  const fetchCurrentEpisodeInfo = useCallback(async (tabId?: number | null): Promise<Partial<EpisodeInfo>> => {
+    try {
+      const info = await chrome.runtime.sendMessage({
+        action: ACTIONS.GET_EPISODE_INFO,
+        tabId: typeof tabId === 'number' ? tabId : undefined,
+      });
+      return {
+        title: String(info?.title || '').trim(),
+        channelName: String(info?.channelName || '').trim(),
+        podcastId: String(info?.podcastId || '').trim(),
+        description: String(info?.description || '').trim(),
+        duration: Number(info?.duration) || 0,
+        image: String(info?.image || '').trim(),
+      };
+    } catch {
+      return {};
+    }
+  }, []);
+
+  /**
+   * 标题获取是异步的：侧边栏刚打开时，小宇宙 SPA 可能仍在替换单集数据。
+   * 保留已有字段，并在首次响应没有 title 时单独补一次，避免 Header 因空 title 被隐藏。
+   */
+  const applyEpisodeInfo = useCallback((pageInfo: Partial<EpisodeInfo>) => {
+    const current = stateDataRef.current;
+    return updateStateData({
+      currentVideoTitle: pageInfo.title || current.currentVideoTitle || '',
+      currentChannelName: pageInfo.channelName || current.currentChannelName || '',
+      currentVideoDescription: pageInfo.description || current.currentVideoDescription || '',
+      currentVideoDuration: pageInfo.duration || current.currentVideoDuration || 0,
+      currentVideoImage: pageInfo.image || current.currentVideoImage || '',
+      currentPodcastId: pageInfo.podcastId || current.currentPodcastId || '',
+    });
+  }, [updateStateData]);
 
   const loadHistory = useCallback(async (): Promise<HistoryEntry[]> => {
     const allData = await chrome.storage.local.get(null);
@@ -271,11 +310,45 @@ const noteJumpRef = useRef<{ videoId: string; expiresAt: number } | null>(null);
       .sort((left, right) => right.timestamp - left.timestamp)
       .slice(0, HISTORY_LIMIT);
 
-    if (recoveredEntries.length) {
-      await chrome.storage.local.set({ [HISTORY_STORAGE_KEY]: entries });
+    // 用缓存里的完整元信息修补旧历史中的空标题/空播客名，兼容早期只写入占位符的记录。
+    const mergedEntries = entries.map((entry) => {
+      const cached = allData[digestCacheKey(entry.videoId)] as CachedDigest | undefined;
+      if (!cached) return entry;
+      return {
+        ...entry,
+        title: entry.title || String(cached.videoTitle || '').trim(),
+        channel: entry.channel || String(cached.channelName || '').trim(),
+        image: entry.image || String(cached.coverImage || '').trim(),
+        timestamp: entry.timestamp || Number(cached.timestamp) || 0,
+      };
+    });
+    const historyChanged = mergedEntries.some((entry, index) => {
+      const original = entries[index];
+      return !original || entry.title !== original.title || entry.channel !== original.channel || entry.image !== original.image || entry.timestamp !== original.timestamp;
+    });
+    if (recoveredEntries.length || historyChanged) {
+      await chrome.storage.local.set({ [HISTORY_STORAGE_KEY]: mergedEntries });
     }
-    setHistory(entries);
-    return entries;
+    setHistory(mergedEntries);
+    return mergedEntries;
+  }, [normalizeHistory]);
+
+  const saveHistoryEntry = useCallback(async (videoId: string, data: AppStateData): Promise<void> => {
+    if (!videoId) return;
+    const historyResult = await chrome.storage.local.get(HISTORY_STORAGE_KEY);
+    const previousHistory = normalizeHistory(historyResult[HISTORY_STORAGE_KEY]);
+    const nextHistory = [
+      {
+        videoId,
+        title: data.currentVideoTitle || '未命名单集',
+        channel: data.currentChannelName || '',
+        image: data.currentVideoImage || '',
+        timestamp: Date.now(),
+      },
+      ...previousHistory.filter((entry) => entry.videoId !== videoId),
+    ].slice(0, HISTORY_LIMIT);
+    await chrome.storage.local.set({ [HISTORY_STORAGE_KEY]: nextHistory });
+    setHistory(nextHistory);
   }, [normalizeHistory]);
 
   const saveCachedDigest = useCallback(async (videoId: string, data: AppStateData) => {
@@ -302,12 +375,13 @@ const noteJumpRef = useRef<{ videoId: string; expiresAt: number } | null>(null);
     };
     const historyResult = await chrome.storage.local.get(HISTORY_STORAGE_KEY);
     const previousHistory = normalizeHistory(historyResult[HISTORY_STORAGE_KEY]);
+    const existingEntry = previousHistory.find((entry) => entry.videoId === videoId);
     const nextHistory = [
       {
         videoId,
-        title: cached.videoTitle || '未命名单集',
-        channel: cached.channelName || '',
-        image: cached.coverImage || '',
+        title: cached.videoTitle || existingEntry?.title || '未命名单集',
+        channel: cached.channelName || existingEntry?.channel || '',
+        image: cached.coverImage || existingEntry?.image || '',
         timestamp: cached.timestamp || Date.now(),
       },
       ...previousHistory.filter((entry) => entry.videoId !== videoId),
@@ -378,6 +452,23 @@ const noteJumpRef = useRef<{ videoId: string; expiresAt: number } | null>(null);
     showResults();
     return true;
   }, [showResults, updateStateData]);
+
+  /**
+   * 已缓存的转写稿会先恢复到界面，不能因为旧缓存缺元信息而让标题一直为空。
+   * 在后台完成页面信息读取后再补齐 Header，并把补齐后的信息写回缓存。
+   */
+  const hydrateCachedEpisodeInfo = useCallback(async (
+    videoId: string,
+    tabId?: number | null
+  ): Promise<void> => {
+    const pageInfo = await fetchCurrentEpisodeInfo(tabId);
+    if (stateDataRef.current.currentVideoId !== videoId) return;
+
+    const nextState = applyEpisodeInfo(pageInfo);
+    if (pageInfo.title || pageInfo.channelName) {
+      await saveCachedDigest(videoId, nextState);
+    }
+  }, [applyEpisodeInfo, fetchCurrentEpisodeInfo, saveCachedDigest]);
 
   // ============================================================
   // CONFIG CHECK
@@ -452,6 +543,7 @@ const noteJumpRef = useRef<{ videoId: string; expiresAt: number } | null>(null);
       const stored = await chrome.storage.local.get(digestCacheKey(targetVideoId));
       const cached = stored[digestCacheKey(targetVideoId)] as CachedDigest | undefined;
       if (restoreCachedDigest(targetVideoId, cached, targetVideoUrl, targetTabId)) {
+        void hydrateCachedEpisodeInfo(targetVideoId, targetTabId);
         return;
       }
     } catch (error) {
@@ -476,19 +568,9 @@ const noteJumpRef = useRef<{ videoId: string; expiresAt: number } | null>(null);
 
     try {
       // Get the page metadata from the Xiaoyuzhou tab, not from a stale panel render.
-      const videoInfo = await chrome.runtime.sendMessage({
-        action: ACTIONS.GET_EPISODE_INFO,
-        tabId: targetTabId ?? undefined,
-      });
+      const videoInfo = await fetchCurrentEpisodeInfo(targetTabId);
 
-      updateStateData({
-        currentVideoTitle: videoInfo.title || '',
-        currentChannelName: videoInfo.channelName || '',
-        currentVideoDescription: videoInfo.description || '',
-        currentVideoDuration: videoInfo.duration || 0,
-        currentVideoImage: videoInfo.image || '',
-        currentPodcastId: videoInfo.podcastId || '',
-      });
+      applyEpisodeInfo(videoInfo);
 
       showLoading('正在转写音频', '正在通过语音识别转写音频…', 10);
 
@@ -513,12 +595,12 @@ const noteJumpRef = useRef<{ videoId: string; expiresAt: number } | null>(null);
         currentTranscriptText: result.transcriptText,
         currentTranscriptTimestamped: result.transcriptTextTimestamped,
         currentTranscriptLanguage: result.language,
-        currentVideoTitle: videoInfo.title || '',
-        currentChannelName: videoInfo.channelName || '',
-        currentVideoDescription: videoInfo.description || '',
-        currentVideoDuration: videoInfo.duration || 0,
-        currentVideoImage: videoInfo.image || '',
-        currentPodcastId: videoInfo.podcastId || '',
+        currentVideoTitle: videoInfo.title || stateDataRef.current.currentVideoTitle || '',
+        currentChannelName: videoInfo.channelName || stateDataRef.current.currentChannelName || '',
+        currentVideoDescription: videoInfo.description || stateDataRef.current.currentVideoDescription || '',
+        currentVideoDuration: videoInfo.duration || stateDataRef.current.currentVideoDuration || 0,
+        currentVideoImage: videoInfo.image || stateDataRef.current.currentVideoImage || '',
+        currentPodcastId: videoInfo.podcastId || stateDataRef.current.currentPodcastId || '',
         currentAsrModel: result.asrModel,
         currentDiarization: result.diarization,
         transcriptLoadedFromCache: false,
@@ -534,7 +616,7 @@ const noteJumpRef = useRef<{ videoId: string; expiresAt: number } | null>(null);
       }
       showError('错误', error instanceof Error ? error.message : '转写过程中发生错误');
     }
-  }, [restoreCachedDigest, saveCachedDigest, showError, showLoading, showResults, showWelcome]);
+  }, [applyEpisodeInfo, fetchCurrentEpisodeInfo, hydrateCachedEpisodeInfo, restoreCachedDigest, saveCachedDigest, showError, showLoading, showResults, showWelcome]);
 
   const stopTranscription = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -782,29 +864,98 @@ const noteJumpRef = useRef<{ videoId: string; expiresAt: number } | null>(null);
 
   const seekTo = useCallback(async (seconds: number) => {
     if (!Number.isFinite(seconds) || seconds < 0) return;
+
+    // —— 跳转诊断：记录每一步，失败时在面板上展示，便于定位断点 ——
+    const steps: string[] = [];
+    const finish = (ok: boolean) => {
+      const report = `[跳转诊断] ${steps.join(' ｜ ')}`;
+      if (ok) console.log(`[小宇宙 Digest v2.0] ${report}`);
+      else {
+        console.warn(`[小宇宙 Digest v2.0] ${report}`);
+        setSeekDiagnostics([...steps]);
+      }
+    };
+    steps.push(`尝试跳转到 ${Math.floor(seconds)}s`);
+
     const payload = { action: ACTIONS.SEEK_TO, seconds: Number(seconds) };
     const tabId = stateDataRef.current.xiaoyuzhouTabId;
+    steps.push(`当前记录的小宇宙标签页: ${typeof tabId === 'number' ? `#${tabId}` : '无'}`);
+
     try {
       if (typeof tabId === 'number') {
+        // 原版的稳定路径：直接向记录的目标标签页发送 seekTo。
         const response = await chrome.tabs.sendMessage(tabId, payload);
-        if (response?.success) {
+        steps.push(`直发到页面结果: ${JSON.stringify(response) ?? 'undefined'}`);
+        if (response?.success && response.audioFound !== false) {
           // 把小宇宙页面带到前台，用户能立刻看到播放进度。
           await focusXiaoyuzhouTab(tabId);
+          finish(true);
           return;
         }
       }
-    } catch {
-      // 当前标签页可能刚刚完成导航，继续走 background 转发作为回退。
+    } catch (error) {
+      steps.push(`直发到页面失败: ${error instanceof Error ? error.message : String(error)}`);
     }
+
+    // content script 未注入时，绕过消息通道，直接在目标页面控制 audio。
+    // 这是原版「直接 seekTo」语义的页面上下文兜底，不依赖 onMessage 接收器。
     try {
-      const relayed = await chrome.runtime.sendMessage({ action: ACTIONS.RELAY_TO_CONTENT, payload });
+      if (typeof tabId === 'number') {
+        const [result] = await chrome.scripting.executeScript({
+          target: { tabId },
+          args: [Number(seconds)],
+          func: (targetSeconds: number) => {
+            const audio = document.querySelector('audio') as HTMLAudioElement | null;
+            if (!audio) return { success: false, audioFound: false };
+            try {
+              audio.currentTime = targetSeconds;
+              if (audio.paused) audio.play().catch(() => {});
+              return {
+                success: true,
+                audioFound: true,
+                readyState: audio.readyState,
+                currentTime: audio.currentTime,
+              };
+            } catch (error) {
+              return {
+                success: false,
+                audioFound: true,
+                error: error instanceof Error ? error.message : String(error),
+              };
+            }
+          },
+        });
+        const pageSeek = result?.result as
+          | { success?: boolean; audioFound?: boolean; currentTime?: number; error?: string }
+          | undefined;
+        steps.push(`页面直接执行结果: ${JSON.stringify(pageSeek) ?? 'undefined'}`);
+        if (pageSeek?.success) {
+          await focusXiaoyuzhouTab(tabId);
+          finish(true);
+          return;
+        }
+      }
+    } catch (error) {
+      steps.push(`页面直接执行失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    try {
+      const relayed = await chrome.runtime.sendMessage({
+        action: ACTIONS.RELAY_TO_CONTENT,
+        payload,
+        targetTabId: typeof tabId === 'number' ? tabId : undefined,
+      });
+      steps.push(`后台转发结果: ${JSON.stringify(relayed) ?? 'undefined'}`);
       if (relayed?.success) {
-        const tabs = await chrome.tabs.query({ url: 'https://www.xiaoyuzhoufm.com/*' });
-        if (tabs[0]?.id !== undefined) await focusXiaoyuzhouTab(tabs[0].id);
+        if (typeof relayed.tabId === 'number') {
+          steps.push(`后台实际发送到标签页: #${relayed.tabId}${relayed.injected ? '（已强制注入）' : ''}`);
+          await focusXiaoyuzhouTab(relayed.tabId);
+        }
+        finish(relayed.response?.audioFound !== false);
         return;
       }
     } catch (error) {
-      console.warn('[小宇宙 Digest v2.0] Failed to seek:', error);
+      steps.push(`后台转发失败: ${error instanceof Error ? error.message : String(error)}`);
     }
 
     // 兜底：小宇宙页面没开或 content script 失联。打开/复用单集页并带上时间戳
@@ -813,23 +964,29 @@ const noteJumpRef = useRef<{ videoId: string; expiresAt: number } | null>(null);
     const baseUrl =
       currentState.currentVideoUrl ||
       (currentState.currentVideoId ? episodeUrl(currentState.currentVideoId) : '');
-    if (!baseUrl) return;
+    if (!baseUrl) {
+      steps.push('兜底失败: 未记录单集 URL，无法打开页面');
+      finish(false);
+      return;
+    }
 
     const url = `${baseUrl}#xyz-note-t=${Math.floor(seconds)}`;
+    steps.push(`兜底: 打开单集页并附带时间戳 hash`);
     if (currentState.currentVideoId) {
       noteJumpRef.current = { videoId: currentState.currentVideoId, expiresAt: Date.now() + 15000 };
     }
 
     void (async () => {
       try {
-        const tabId = stateDataRef.current.xiaoyuzhouTabId;
-        if (typeof tabId === 'number') {
-          await chrome.tabs.update(tabId, { url, active: true });
-          await focusXiaoyuzhouTab(tabId);
+        const fallbackTabId = stateDataRef.current.xiaoyuzhouTabId;
+        if (typeof fallbackTabId === 'number') {
+          await chrome.tabs.update(fallbackTabId, { url, active: true });
+          await focusXiaoyuzhouTab(fallbackTabId);
+          finish(false);
           return;
         }
       } catch {
-        // 标签页可能已被关闭，改为新建。
+        steps.push('复用旧标签页失败，改为新建');
       }
       try {
         const created = await chrome.tabs.create({ url, active: true });
@@ -838,7 +995,8 @@ const noteJumpRef = useRef<{ videoId: string; expiresAt: number } | null>(null);
           await focusXiaoyuzhouTab(created.id);
         }
       } catch (error) {
-        console.warn('[小宇宙 Digest v2.0] Failed to open episode for timestamp jump:', error);
+        steps.push(`新建标签页失败: ${error instanceof Error ? error.message : String(error)}`);
+        finish(false);
       }
     })();
   }, [focusXiaoyuzhouTab, updateStateData]);
@@ -975,8 +1133,10 @@ const noteJumpRef = useRef<{ videoId: string; expiresAt: number } | null>(null);
           videoTitle: currentState.currentVideoTitle,
           channelName: currentState.currentChannelName,
           videoDescription: currentState.currentVideoDescription,
-          conversation: chatMessages,
-        });
+conversation: chatMessages,
+chatMode,
+});
+
       } catch (error) {
         console.error('Chat error:', error);
         setChatMessages((prev) => [
@@ -986,10 +1146,16 @@ const noteJumpRef = useRef<{ videoId: string; expiresAt: number } | null>(null);
         setChatLoading(false);
       }
     },
-    [chatLoading, chatMessages]
-  );
+[chatLoading, chatMessages, chatMode]
+);
+
+const changeChatMode = useCallback((mode: EpisodeChatMode) => {
+setChatMode(mode);
+void chrome.storage.local.set({ [STORAGE_KEYS.CHAT_MODE]: mode });
+}, []);
 
 const clearChat = useCallback(() => {
+
   setChatMessages([]);
 }, []);
 
@@ -1109,7 +1275,10 @@ const regenerateSuggestedQuestions = useCallback(() => {
         const stored = await chrome.storage.local.get(digestCacheKey(videoId));
         if (requestId !== episodeSyncRequestRef.current) return;
         const cached = stored[digestCacheKey(videoId)] as CachedDigest | undefined;
-        if (restoreCachedDigest(videoId, cached, videoUrl, tabId, undefined, { keepActiveTab: true })) return;
+        if (restoreCachedDigest(videoId, cached, videoUrl, tabId, undefined, { keepActiveTab: true })) {
+          void hydrateCachedEpisodeInfo(videoId, tabId);
+          return;
+        }
       } catch (error) {
         console.warn('[小宇宙 Digest v2.0] Failed to restore cached episode during note jump:', error);
       }
@@ -1147,13 +1316,24 @@ const regenerateSuggestedQuestions = useCallback(() => {
       const stored = await chrome.storage.local.get(digestCacheKey(videoId));
       if (requestId !== episodeSyncRequestRef.current) return;
       const cached = stored[digestCacheKey(videoId)] as CachedDigest | undefined;
-      if (restoreCachedDigest(videoId, cached, videoUrl, tabId)) return;
+      if (restoreCachedDigest(videoId, cached, videoUrl, tabId)) {
+        void hydrateCachedEpisodeInfo(videoId, tabId);
+        return;
+      }
     } catch (error) {
       console.warn('[小宇宙 Digest v2.0] Failed to restore cached episode:', error);
     }
 
-    if (requestId === episodeSyncRequestRef.current) showWelcome();
-  }, [appState, restoreCachedDigest, showResults, showWelcome, updateStateData]);
+    if (requestId === episodeSyncRequestRef.current) {
+      const pageInfo = await fetchCurrentEpisodeInfo(tabId);
+      if (requestId !== episodeSyncRequestRef.current) return;
+      const nextState = applyEpisodeInfo(pageInfo);
+      if (pageInfo.title || pageInfo.channelName) {
+        await saveHistoryEntry(videoId, nextState);
+      }
+      showWelcome();
+    }
+  }, [appState, applyEpisodeInfo, fetchCurrentEpisodeInfo, hydrateCachedEpisodeInfo, restoreCachedDigest, saveHistoryEntry, showResults, showWelcome, updateStateData]);
 
   const exportHistory = useCallback(async () => {
     try {
@@ -1273,10 +1453,15 @@ const regenerateSuggestedQuestions = useCallback(() => {
   // INITIALIZATION AND TAB TRACKING
   // ============================================================
 
-  useEffect(() => {
-    void loadHistory();
+useEffect(() => {
+void loadHistory();
+void chrome.storage.local.get(STORAGE_KEYS.CHAT_MODE).then((stored) => {
+const storedMode = stored[STORAGE_KEYS.CHAT_MODE];
+if (storedMode === 'strict' || storedMode === 'open') setChatMode(storedMode);
+});
 
-    const syncActiveTab = async () => {
+const syncActiveTab = async () => {
+
       try {
         const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
         if (activeTab) await syncEpisodeFromTab(activeTab);
@@ -1553,8 +1738,11 @@ const regenerateSuggestedQuestions = useCallback(() => {
                 suggestionsLoading={suggestionsLoading}
                 suggestionsError={suggestionsError}
                 onRegenerateSuggestions={regenerateSuggestedQuestions}
-                onSend={sendChatMessage}
-                onClear={clearChat}
+onSend={sendChatMessage}
+chatMode={chatMode}
+onChatModeChange={changeChatMode}
+onClear={clearChat}
+
                 onSeek={seekTo}
               />
             )}
@@ -1572,6 +1760,33 @@ const regenerateSuggestedQuestions = useCallback(() => {
           </>
         )}
       </div>
+
+      {seekDiagnostics && (
+        <div className="seek-diagnostics" role="alert">
+          <div className="seek-diagnostics-head">
+            <span>⏱ 时间戳跳转诊断</span>
+            <div className="seek-diagnostics-actions">
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard
+                    ?.writeText(seekDiagnostics.map((step, i) => `${i + 1}. ${step}`).join('\n'))
+                    .catch(() => {});
+                }}
+              >
+                复制
+              </button>
+              <button type="button" onClick={() => setSeekDiagnostics(null)}>关闭</button>
+            </div>
+          </div>
+          <ol className="seek-diagnostics-steps">
+            {seekDiagnostics.map((step, index) => (
+              <li key={`${index}-${step}`}>{step}</li>
+            ))}
+          </ol>
+          <p className="seek-diagnostics-hint">跳转未完成。请点「复制」并把诊断信息发给开发者。</p>
+        </div>
+      )}
     </div>
   );
 };

@@ -178,13 +178,23 @@ chrome.runtime.onMessage.addListener(
       case 'seekTo': {
         const seconds = Number(message.seconds) || 0;
         const audio = getAudioElement();
+        console.warn(
+          '[Digest 诊断][页面]',
+          `收到 seekTo(${seconds}s)；音频元素: ${audio ? '已找到' : '未找到'}；页面路径: ${window.location.pathname}`
+        );
         if (audio) {
           performSeek(audio, seconds);
+          sendResponse({
+            success: true,
+            audioFound: true,
+            readyState: audio.readyState,
+            currentTime: audio.currentTime,
+          });
         } else {
           // 音频元素可能还没挂载，后台重试。
           void seekWithRetry(seconds);
+          sendResponse({ success: true, audioFound: false, detail: '音频元素未挂载，正在轮询重试' });
         }
-        sendResponse({ success: true });
         return false;
       }
 
@@ -571,47 +581,202 @@ function showNoteSavedToast(note: { timestamp: string; videoTitle: string; text:
 }
 
 // ============================================================
-// INFO EXTRACTION（优先 __NEXT_DATA__，回退 og meta）
+// INFO EXTRACTION（优先 __NEXT_DATA__，兼容新版页面结构并回退 DOM 元信息）
 // ============================================================
 
+type MetadataRecord = Record<string, unknown>;
+
+function asMetadataRecord(value: unknown): MetadataRecord | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as MetadataRecord
+    : null;
+}
+
+/** 小宇宙部分页面会把文本包在 { text/value } 对象中，不能直接 String(value)。 */
+function readMetadataText(value: unknown, depth = 0): string {
+  if (typeof value === 'string') return value.trim();
+  if (depth >= 2 || !value || typeof value !== 'object') return '';
+  const record = asMetadataRecord(value);
+  if (!record) return '';
+  for (const key of ['text', 'value', 'content', 'name', 'title']) {
+    const text = readMetadataText(record[key], depth + 1);
+    if (text) return text;
+  }
+  return '';
+}
+
+function readMetadataField(source: MetadataRecord | null, keys: string[]): string {
+  if (!source) return '';
+  for (const key of keys) {
+    const text = readMetadataText(source[key]);
+    if (text) return text;
+  }
+  return '';
+}
+
+function collectMetadataObjects(root: unknown): MetadataRecord[] {
+  const objects: MetadataRecord[] = [];
+  const visited = new WeakSet<object>();
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    if (visited.has(value)) return;
+    visited.add(value);
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    const record = value as MetadataRecord;
+    objects.push(record);
+    Object.values(record).forEach(visit);
+  };
+  visit(root);
+  return objects;
+}
+
+const EPISODE_TITLE_FIELDS = ['title', 'episodeTitle', 'episode_title', 'name'];
+const EPISODE_ID_FIELDS = ['eid', 'episodeId', 'episode_id'];
+
+/**
+ * 仅把真正的单集对象作为匹配结果。
+ *
+ * Next.js 的 pageProps 及评论 owner 也会带与当前地址相同的 `id`；它们并不是单集，
+ * 若只按 id 深度优先查找，容易先命中外层 pageProps，进而丢失 title。
+ */
+function isCurrentEpisodeRecord(source: MetadataRecord, episodeId: string): boolean {
+  if (!episodeId) return false;
+  const normalizedId = episodeId.toLowerCase();
+  const episodeSpecificId = readMetadataField(source, EPISODE_ID_FIELDS).toLowerCase();
+  if (episodeSpecificId === normalizedId) return true;
+
+  const objectId = readMetadataField(source, ['id']).toLowerCase();
+  const type = readMetadataField(source, ['type']).toLowerCase();
+  return objectId === normalizedId && /episode/.test(type);
+}
+
+function episodeRecordScore(source: MetadataRecord, episodeId: string): number {
+  let score = 0;
+  const normalizedId = episodeId.toLowerCase();
+  if (readMetadataField(source, EPISODE_ID_FIELDS).toLowerCase() === normalizedId) score += 100;
+  if (readMetadataField(source, ['type']).toLowerCase() === 'episode') score += 40;
+  if (readMetadataField(source, EPISODE_TITLE_FIELDS)) score += 20;
+  if (source.enclosure || source.media || source.audioUrl || source.audio_url) score += 10;
+  return score;
+}
+
+function findEpisodeRecord(data: unknown, episodeId: string): MetadataRecord | null {
+  const root = asMetadataRecord(data);
+  const props = asMetadataRecord(root?.props);
+  const pageProps = asMetadataRecord(props?.pageProps);
+
+  // 小宇宙当前页面在 pageProps.episode 提供完整单集对象；先读取确定路径，
+  // 不让同一树中无标题的 pageProps / 评论对象抢占结果。
+  const directCandidates = [
+    asMetadataRecord(pageProps?.episode),
+    asMetadataRecord(root?.episode),
+  ].filter((item): item is MetadataRecord => Boolean(item));
+  const directEpisode = directCandidates.find((item) =>
+    !episodeId || isCurrentEpisodeRecord(item, episodeId)
+  );
+  if (directEpisode) return directEpisode;
+
+  const objects = collectMetadataObjects(data);
+  const matches = objects
+    .filter((item) => isCurrentEpisodeRecord(item, episodeId))
+    .sort((left, right) => episodeRecordScore(right, episodeId) - episodeRecordScore(left, episodeId));
+  if (matches[0]) return matches[0];
+
+  // 兼容以后页面不再把 episode 直接放在 pageProps 下的情况。
+  return objects.find((item) => {
+    const title = readMetadataField(item, EPISODE_TITLE_FIELDS);
+    const hasAudio = Boolean(item.enclosure || item.media || item.audioUrl || item.audio_url);
+    return Boolean(title && hasAudio);
+  }) || null;
+}
+
+function findPodcastRecord(data: unknown, episode: MetadataRecord | null): MetadataRecord | null {
+  const directCandidates = [
+    episode?.podcast,
+    episode?.show,
+    episode?.program,
+    episode?.podcastInfo,
+    asMetadataRecord(asMetadataRecord(asMetadataRecord(data)?.props)?.pageProps)?.podcast,
+  ];
+  const direct = directCandidates
+    .map(asMetadataRecord)
+    .find((item): item is MetadataRecord => Boolean(item && readMetadataField(item, ['title', 'name'])));
+  if (direct) return direct;
+
+  return collectMetadataObjects(data).find((item) => {
+    const title = readMetadataField(item, ['title', 'name']);
+    const podcastId = readMetadataField(item, ['pid', 'podcastId', 'podcast_id']);
+    const episodeId = readMetadataField(item, ['eid', 'episodeId', 'episode_id']);
+    return Boolean(title && podcastId && !episodeId);
+  }) || null;
+}
+
+function readMetaContent(selector: string): string {
+  return document.querySelector(selector)?.getAttribute('content')?.trim() || '';
+}
+
+function findPodcastNameInDocument(): string {
+  const podcastLink = document.querySelector<HTMLAnchorElement>('a[href*="/podcast/"]');
+  return podcastLink?.textContent?.trim() || '';
+}
+
+/**
+ * 页面可见的单集名是 episode 主内容区域的 H1（当前为 h1.title）。
+ * 将它放在社交分享 meta 之前作为回退，避免站点异步更新 meta 或其包含播客名时误识别。
+ */
+function findEpisodeTitleInDocument(): string {
+  const candidates = document.querySelectorAll<HTMLElement>(
+    'h1.title, h1, [role="heading"][aria-level="1"]'
+  );
+  for (const candidate of candidates) {
+    const title = candidate.textContent?.replace(/\s+/g, ' ').trim() || '';
+    if (title) return title;
+  }
+  return '';
+}
+
 function extractVideoInfo(): EpisodeInfo {
+  let data: unknown = null;
   const nextData = document.getElementById('__NEXT_DATA__');
   if (nextData) {
     try {
-      const data = JSON.parse(nextData.textContent || '');
-      const episode = data?.props?.pageProps?.episode;
-      if (episode && typeof episode === 'object') {
-        return {
-          title: cleanEpisodeTitle(episode.title),
-          channelName:
-            episode.podcast?.title ||
-            episode.podcast?.name ||
-            episode.podcast?.author ||
-            '',
-          podcastId:
-            episode.podcast?.pid || episode.podcast?.id || episode.pid || '',
-          description: episode.description || '',
-          duration: Number(episode.duration) || 0,
-          image: extractCoverImage(episode),
-        };
-      }
-    } catch (e) {
-      // 解析失败则回退
+      data = JSON.parse(nextData.textContent || '');
+    } catch {
+      // 解析失败则继续使用页面元信息兜底。
     }
   }
 
-  const ogTitle =
-    document.querySelector('meta[property="og:title"]')?.getAttribute('content') || '';
-  const ogImage =
-    document.querySelector('meta[property="og:image"]')?.getAttribute('content') || '';
+  const episodeId = extractEpisodeId(window.location.href) || '';
+  const episode = findEpisodeRecord(data, episodeId);
+  const podcast = findPodcastRecord(data, episode);
+  const pageProps = asMetadataRecord(asMetadataRecord(asMetadataRecord(data)?.props)?.pageProps);
+
+  const title = cleanEpisodeTitle(
+    readMetadataField(episode, EPISODE_TITLE_FIELDS) ||
+      readMetadataField(pageProps, ['episodeTitle', 'episode_title']) ||
+      findEpisodeTitleInDocument() ||
+      readMetaContent('meta[property="og:title"]') ||
+      readMetaContent('meta[name="twitter:title"]') ||
+      document.title
+  );
+  const channelName =
+    readMetadataField(podcast, ['title', 'name', 'author']) ||
+    readMetadataField(episode, ['podcastTitle', 'podcastName', 'showTitle']) ||
+    findPodcastNameInDocument();
+  const podcastId =
+    readMetadataField(podcast, ['pid', 'podcastId', 'podcast_id', 'id']) ||
+    readMetadataField(episode, ['podcastId', 'podcast_id', 'pid']);
 
   return {
-    title: cleanEpisodeTitle(ogTitle),
-    channelName: '',
-    podcastId: '',
-    description: '',
-    duration: 0,
-    image: ogImage,
+    title,
+    channelName,
+    podcastId,
+    description: readMetadataField(episode, ['description', 'summary', 'showNotes']),
+    duration: Number(readMetadataField(episode, ['duration', 'durationSeconds', 'length'])) || 0,
+    image: episode ? extractCoverImage(episode) : readMetaContent('meta[property="og:image"]'),
   };
 }
 
@@ -705,20 +870,32 @@ function performSeek(audio: HTMLAudioElement, seconds: number): void {
   const applySeek = () => {
     try {
       audio.currentTime = seconds;
+      console.warn('[Digest 诊断][页面]', `currentTime 已设为 ${seconds}s（readyState=${audio.readyState}）`);
     } catch (e) {
       console.error('[小宇宙 Digest v2.0] 跳转失败:', e);
+      console.warn('[Digest 诊断][页面]', `currentTime 赋值抛错: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
 
-    if (!audio.paused) return;
+    if (!audio.paused) {
+      console.warn('[Digest 诊断][页面]', '音频正在播放，无需触发 play()');
+      return;
+    }
 
-    audio.play().catch(() => {
-      // 自动播放被拦截：先试页面自己的播放按钮，仍不行则提示用户手动点播放。
-      triggerSitePlay();
-      window.setTimeout(() => {
-        if (audio.paused) showSeekPausedToast(seconds);
-      }, 700);
-    });
+    audio.play().then(
+      () => console.warn('[Digest 诊断][页面]', 'play() 成功，已开始播放'),
+      () => {
+        console.warn('[Digest 诊断][页面]', 'play() 被浏览器拦截，尝试点击页面播放按钮');
+        // 自动播放被拦截：先试页面自己的播放按钮，仍不行则提示用户手动点播放。
+        triggerSitePlay();
+        window.setTimeout(() => {
+          if (audio.paused) {
+            console.warn('[Digest 诊断][页面]', '自动播放仍被拦截，展示手动播放提示');
+            showSeekPausedToast(seconds);
+          }
+        }, 700);
+      }
+    );
   };
 
   // 音频元数据未就绪时直接赋值 currentTime 可能被重置，等 metadata 加载后再跳。
@@ -738,12 +915,13 @@ async function seekWithRetry(seconds: number, maxAttempts = 40): Promise<void> {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const audio = getAudioElement();
     if (audio) {
+      if (attempt > 0) console.warn('[Digest 诊断][页面]', `第 ${attempt + 1} 次轮询后找到音频元素`);
       performSeek(audio, seconds);
       return;
     }
     await delay(500);
   }
-  console.error('[小宇宙 Digest v2.0] 跳转失败：未找到音频元素');
+  console.warn('[Digest 诊断][页面]', `轮询 ${maxAttempts} 次后仍未找到音频元素，放弃跳转`);
 }
 
 function seekToTimestamp(seconds: number): void {
