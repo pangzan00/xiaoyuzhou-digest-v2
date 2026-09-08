@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "小宇宙 Digest v2.0",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "minimum_chrome_version": "116",
   "description": "把小宇宙播客变成学习资料：paraformer-v2 语音转写、AI 概览、重点讲解与时间戳笔记。",
   "permissions": ["sidePanel", "storage", "unlimitedStorage", "tabs", "scripting"],
